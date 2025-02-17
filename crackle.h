@@ -15,6 +15,12 @@ typedef void (*btle_handler_t)(crackle_state_t *state,
                                off_t offset,
                                size_t len);
 
+// header update hook for different formats if their header data needs to be
+// changed after packet decryption
+typedef void (*format_header_updater_t)(const crackle_state_t *state,
+                               const struct pcap_pkthdr *h,
+                               u_char *packet_bytes);
+
 struct _encrypted_packet_t {
     unsigned pcap_idx;
 
@@ -78,6 +84,7 @@ struct _connection_state_t {
 
 struct _crackle_state_t {
     btle_handler_t btle_handler;
+    format_header_updater_t format_header_updater;
 
     unsigned pcap_idx;
 

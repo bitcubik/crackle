@@ -453,6 +453,12 @@ static void packet_decrypter(crackle_state_t *state,
         wh.len -= 4;
         wh.caplen -= 4;
 
+        // update capture format header of packets with modified data
+        // (if format requires it)
+        if (state->format_header_updater != NULL) {
+            state->format_header_updater(state, &wh, write_data);
+        }
+
         pcap_dump((unsigned char *)state->dumper, &wh, write_data);
         free(write_data);
     }
@@ -518,6 +524,31 @@ void packet_handler_nordic(u_char *user, const struct pcap_pkthdr *h, const u_ch
     state = (crackle_state_t *)user;
     size_t header_len = sizeof(pacp_nordic_ble_sniffer_meta_t);
     state->btle_handler(state, h, bytes, header_len, h->caplen);
+}
+
+/*
+ * Update payload length in Nordic BLE header after decrypting, as 4 bytes get
+ * lost for MIC
+ * 
+ * TODO - support for legacy Nordic BLE version 0
+ * 
+ * Format reference: https://github.com/wireshark/wireshark/blob/master/epan/dissectors/packet-nordic_ble.c
+ */
+void format_header_updater_nordic_ble(const crackle_state_t *state, const struct pcap_pkthdr *h, u_char *packet_bytes) {
+    u_char protocol_version = packet_bytes[3];
+
+    // payload length = number of bytes in packet following the 1 byte board
+    // type and 6 byte header
+    uint16_t new_payload_length = h->len - 1 - 6;
+
+    if (protocol_version == 1) {
+        // version 1 supports 1 byte of payload length
+        packet_bytes[2] = new_payload_length & 0xFF;
+    } else {
+        // version >1 supports 2 bytes of payload length, little endian
+        packet_bytes[1] = new_payload_length & 0xFF;
+        packet_bytes[2] = (new_payload_length >> 8) & 0xFF;
+    }
 }
 
 /*
@@ -1335,15 +1366,19 @@ int main(int argc, char **argv) {
     {
         case BLUETOOTH_LE_LL_WITH_PHDR:
                 packet_handler = packet_handler_ble_phdr;
+                state.format_header_updater = NULL;
                 break;
         case PPI:
                 packet_handler = packet_handler_ppi;
+                state.format_header_updater = NULL;
                 break;
         case NORDIC_BLE_SNIFFER_META:
                 packet_handler = packet_handler_nordic;
+                state.format_header_updater = NULL;
                 break;
         case NORDIC_BLE:
                 packet_handler = packet_handler_nordic;
+                state.format_header_updater = format_header_updater_nordic_ble;
                 break;
         default:
                 printf("Frames inside PCAP file not supported ! dlt_name=%s\n", pcap_datalink_val_to_name(cap_dlt));
